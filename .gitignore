@@ -50,3 +50,10 @@ rsconnect/
 
 # PDF output folder
 notes-pdfs/
+figs/
+
+# Python Virtual Environment
+.venv/
+code/.venv/
+__pycache__/
+*.pyc
