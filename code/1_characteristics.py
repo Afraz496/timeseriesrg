@@ -155,10 +155,10 @@ df_real = df_real.sort_values('time_value')
 df_real['daily_cases'] = df_real['value'].diff()
 
 # Moving Averages
-# 7-day Trailing Average (preceding 7 days including current)
+# 7-day Trailing Average
 df_real['trailing_avg_7d'] = df_real['daily_cases'].rolling(window=7).mean()
 
-# 7-day Centered Moving Average (centered around current)
+# 7-day Centered Moving Average
 df_real['centered_avg_7d'] = df_real['daily_cases'].rolling(window=7, center=True).mean()
 
 # Drop rows with NAs
@@ -202,15 +202,116 @@ chart_ma = alt.Chart(plot_df_real).mark_line().encode(
     height=400
 ).interactive()
 
+# ---------------------------------------------------------
+# PART 3: Autoregressive Model (AR1)
+# ---------------------------------------------------------
+
+# Simulate AR(1): x_t = phi * x_{t-1} + w_t
+phi = 0.9
+w = np.random.normal(0, 1, n)
+ar1 = np.zeros(n)
+for t in range(1, n):
+    ar1[t] = phi * ar1[t-1] + w[t]
+
+# Random Walks (Non-Stationary)
+rw = np.cumsum(w) # Random Walk
+delta = 0.2
+rwd = np.cumsum(w + delta) # Random Walk with Drift
+
+df_non_stationary = pd.concat([
+    pd.DataFrame({'time': np.arange(n), 'value': rw, 'type': 'Random Walk'}),
+    pd.DataFrame({'time': np.arange(n), 'value': rwd, 'type': 'Random Walk with Drift'})
+])
+
+# Visualization for Non-Stationary Processes
+chart_rw = alt.Chart(df_non_stationary).mark_line(strokeWidth=1.5).encode(
+    x=alt.X('time:Q', title='Time'),
+    y=alt.Y('value:Q', title='Value'),
+    color=alt.Color('type:N', scale=alt.Scale(range=['#8e44ad', '#27ae60']), legend=alt.Legend(orient='bottom'))
+).properties(
+    title='Random Walk vs. Random Walk with Drift',
+    width=800,
+    height=300
+)
+
+# Existing AR Analysis
+df_ar = pd.DataFrame({'time': np.arange(n), 'value': ar1, 'type': f'AR(1) Process (phi={phi})'})
+
+# AR Trajectory
+chart_ar_traj = alt.Chart(df_ar).mark_line(strokeWidth=1).encode(
+    x=alt.X('time:Q', title='Time'),
+    y=alt.Y('value:Q', title='Value'),
+    color=alt.value('#2980b9')
+).properties(
+    title=f'AR(1) Process Trajectory (phi={phi})',
+    width=800,
+    height=200
+)
+
+# AR ACF
+ar_acf_df = get_acf_df(ar1, f'AR(1) phi={phi}')
+chart_ar_acf = alt.Chart(ar_acf_df).mark_bar(size=10).encode(
+    x=alt.X('lag:O', title='Lag'),
+    y=alt.Y('correlation:Q', title='Autocorrelation', scale=alt.Scale(domain=[-1, 1])),
+    color=alt.value('#2980b9')
+).properties(
+    title='ACF of AR(1) Process (Geometric Decay)',
+    width=800,
+    height=200
+)
+
+chart_ar_final = alt.vconcat(chart_ar_traj, chart_ar_acf)
+# Combine with Random Walk chart
+chart_part3_combined = alt.vconcat(chart_ar_final, chart_rw)
+
+# ---------------------------------------------------------
+# PART 4: Signal + Noise
+# ---------------------------------------------------------
+
+# Define a periodic signal + noise: y_t = 2*sin(2*pi*t/50) + noise
+t_idx = np.arange(200) # Shorter for better visual clarity
+signal = 2 * np.sin(2 * np.pi * t_idx / 50)
+noise = np.random.normal(0, 1, 200)
+y = signal + noise
+
+df_sn = pd.DataFrame({
+    'time': t_idx,
+    'Raw (Signal + Noise)': y,
+    'Pure Signal': signal
+})
+
+plot_df_sn = df_sn.melt(id_vars=['time'], var_name='Type', value_name='Value')
+
+chart_sn = alt.Chart(plot_df_sn).mark_line().encode(
+    x=alt.X('time:Q', title='Time'),
+    y=alt.Y('Value:Q', title='Value'),
+    color=alt.Color('Type:N', scale=alt.Scale(
+        domain=['Raw (Signal + Noise)', 'Pure Signal'],
+        range=['#bdc3c7', '#c0392b']
+    ), legend=alt.Legend(orient='bottom')),
+    strokeWidth=alt.condition(alt.datum.Type == 'Pure Signal', alt.value(3), alt.value(1.5)),
+    strokeDash=alt.condition(alt.datum.Type == 'Raw (Signal + Noise)', alt.value([2, 1]), alt.value([0]))
+).properties(
+    title='Signal + Noise Example (Periodic Signal)',
+    width=800,
+    height=400
+)
+
 # Save Outputs
 try:
-    # Save simulated plots
+    # Part 1
     combined_stats.save(os.path.join(output_dir, 'white_noise_stats.png'))
     acf_final.save(os.path.join(output_dir, 'white_noise_acf_stats.png'))
     
-    # Save real-world analysis
+    # Part 2
     chart_ma.save(os.path.join(output_dir, 'covid_moving_averages.png'))
     
-    print(f"\nAll Altair plots saved successfully to {output_dir}")
+    # Part 3
+    chart_part3_combined.save(os.path.join(output_dir, 'ar_process_analysis.png'))
+    
+    # Part 4
+    chart_sn.save(os.path.join(output_dir, 'signal_plus_noise.png'))
+    
+    print(f"\nAll Altair plots (4 sections) saved successfully to {output_dir}")
 except Exception as e:
     print(f"Error saving Altair plots: {e}")
