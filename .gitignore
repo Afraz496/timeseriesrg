@@ -57,3 +57,8 @@ figs/
 code/.venv/
 __pycache__/
 *.pyc
+
+
+*.png
+*.jpg
+*.jpeg
