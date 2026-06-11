@@ -319,8 +319,8 @@ def analyze_and_plot_ar1():
         )
     )
     
-    chart.save(os.path.join(output_dir, 'ar_phi_comparison.png'))
-    print("\nSaved ar_phi_comparison.png successfully to figs/.")
+    chart.save(os.path.join(output_dir, '1_ar_phi_comparison.png'))
+    print("\nSaved 1_ar_phi_comparison.png successfully to figs/.")
 
 # Part 2: MA(1) model analysis (theta = +0.9 vs theta = -0.9)
 
@@ -373,8 +373,8 @@ def analyze_and_plot_ma1():
         )
     )
     
-    chart.save(os.path.join(output_dir, 'ma_theta_comparison.png'))
-    print("\nSaved ma_theta_comparison.png successfully to figs/.")
+    chart.save(os.path.join(output_dir, '2_ma_theta_comparison.png'))
+    print("\nSaved 2_ma_theta_comparison.png successfully to figs/.")
 
 # Part 3: MA(1) non-uniqueness analysis
 
@@ -446,8 +446,8 @@ def analyze_and_plot_ma_non_uniqueness():
         )
     )
     
-    chart.save(os.path.join(output_dir, 'ma_non_uniqueness.png'))
-    print("\nSaved ma_non_uniqueness.png successfully to figs/.")
+    chart.save(os.path.join(output_dir, '3_ma_non_uniqueness.png'))
+    print("\nSaved 3_ma_non_uniqueness.png successfully to figs/.")
 
 def get_non_uniqueness_df(x, name, nlags=10):
     acf = compute_acf(x, nlags=nlags)
@@ -517,8 +517,8 @@ def analyze_and_plot_parameter_redundancy():
         )
     )
     
-    chart.save(os.path.join(output_dir, 'parameter_redundancy.png'))
-    print("\nSaved parameter_redundancy.png successfully to figs/.")
+    chart.save(os.path.join(output_dir, '4_parameter_redundancy.png'))
+    print("\nSaved 4_parameter_redundancy.png successfully to figs/.")
 
 # Part 5: AR(2) vs MA(3) comparison (Figure 3 reproduction)
 
@@ -590,8 +590,8 @@ def analyze_and_plot_fig3():
         )
     )
     
-    chart.save(os.path.join(output_dir, 'ar2_ma3_comparison.png'))
-    print("\nSaved ar2_ma3_comparison.png successfully to figs/.")
+    chart.save(os.path.join(output_dir, '5_ar2_ma3_comparison.png'))
+    print("\nSaved 5_ar2_ma3_comparison.png successfully to figs/.")
 
 # Main script execution
 
