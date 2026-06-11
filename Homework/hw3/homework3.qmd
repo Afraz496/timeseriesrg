@@ -307,33 +307,7 @@ different color. What do these curves look like to you? Use the plot to argue
 that the HP filter acts like a kernel smoother.
 
 ```{python}
-#| include: false
-n_hp = 100
-lmbda_hp = 100
 
-# Construct second difference matrix D
-D = np.zeros((n_hp - 2, n_hp))
-for i in range(n_hp - 2):
-    D[i, i] = 1
-    D[i, i+1] = -2
-    D[i, i+2] = 1
-
-I = np.eye(n_hp)
-K = np.linalg.inv(I + lmbda_hp * D.T @ D)
-
-# Rows (1-indexed: 25, 50, 75) => 0-indexed: 24, 49, 74
-rows_to_plot = [24, 49, 74]
-colors = ["steelblue", "tomato", "seagreen"]
-
-fig, ax = plt.subplots(figsize=(10, 5))
-for r, col in zip(rows_to_plot, colors):
-    sns.lineplot(x=np.arange(1, n_hp + 1), y=K[r, :], label=f"Row {r + 1}", color=col, lw=2.5, ax=ax)
-ax.set_title("Empirical Rows of the HP Filter Matrix K ($\\lambda$=100, n=100)")
-ax.set_xlabel("Position j")
-ax.set_ylabel("Weight K_ij")
-ax.legend()
-plt.tight_layout()
-plt.show()
 ```
 
 *(Type your discussion here)*
@@ -344,23 +318,7 @@ for the HP filter. This should have a closed-form. Plot this and comment on
 whether or not your empirical results adhere to what is known asymptotically.
 
 ```{python}
-#| include: false
-alpha_hp = (4.0 * lmbda_hp) ** (-0.25)
-j_grid = np.arange(1, n_hp + 1)
-s = j_grid - 50
 
-# Analytical asymptotic kernel weights at distance s
-w_theoretical = (alpha_hp / 2.0) * np.exp(-alpha_hp * np.abs(s)) * (np.cos(alpha_hp * np.abs(s)) + np.sin(alpha_hp * np.abs(s)))
-
-fig, ax = plt.subplots(figsize=(10, 5))
-sns.lineplot(x=j_grid, y=K[49, :], label="Empirical Row 50", color="tomato", lw=3, ax=ax)
-sns.lineplot(x=j_grid, y=w_theoretical, label="Theoretical Kernel", color="black", linestyle="--", lw=2, ax=ax)
-ax.set_title("Comparison: HP Filter Empirical Row 50 vs. Asymptotically Equivalent Kernel")
-ax.set_xlabel("Position j")
-ax.set_ylabel("Weight")
-ax.legend()
-plt.tight_layout()
-plt.show()
 ```
 
 *(Type your discussion here)*
@@ -495,57 +453,7 @@ compute its auto-correlation function, and compare to the analytic
 formula you derived.
 
 ```{python}
-#| include: false
-# Parameters
-np.random.seed(42)
-N_spec = 20000
-t_spec = np.arange(1, N_spec + 1)
-omega1, omega2 = 0.05, 0.12
-sigma1_sq, sigma2_sq = 1.5, 3.0
 
-# Simulate U coefficients
-U11, U12 = np.random.normal(0, np.sqrt(sigma1_sq), 2)
-U21, U22 = np.random.normal(0, np.sqrt(sigma2_sq), 2)
-
-# Generate process
-x_spec = (U11 * np.cos(2 * np.pi * omega1 * t_spec) + 
-          U12 * np.sin(2 * np.pi * omega1 * t_spec) + 
-          U21 * np.cos(2 * np.pi * omega2 * t_spec) + 
-          U22 * np.sin(2 * np.pi * omega2 * t_spec))
-
-# Compute empirical ACF
-def compute_acf(series, max_lag=40):
-    mean_val = np.mean(series)
-    var_val = np.var(series)
-    acf_vals = []
-    for h in range(max_lag + 1):
-        if h == 0:
-            acf_vals.append(1.0)
-        else:
-            cov_h = np.mean((series[:-h] - mean_val) * (series[h:] - mean_val))
-            acf_vals.append(cov_h / var_val)
-    return np.array(acf_vals)
-
-max_lag = 40
-empirical_acf = compute_acf(x_spec, max_lag=max_lag)
-
-# Analytical ACF
-lags_grid = np.arange(0, max_lag + 1)
-gamma_h = sigma1_sq * np.cos(2 * np.pi * omega1 * lags_grid) + sigma2_sq * np.cos(2 * np.pi * omega2 * lags_grid)
-analytical_acf = gamma_h / (sigma1_sq + sigma2_sq)
-
-# Plot comparison
-fig, ax = plt.subplots(figsize=(10, 5))
-acf_df = pd.DataFrame({"Lag": lags_grid, "Empirical ACF": empirical_acf, "Analytical ACF": analytical_acf})
-sns.lineplot(data=acf_df, x="Lag", y="Analytical ACF", color="black", linestyle="--", marker="o", ax=ax, label="Analytical ACF")
-ax.vlines(lags_grid, 0, empirical_acf, color="tomato", linewidth=1.5)
-ax.scatter(lags_grid, empirical_acf, color="tomato", zorder=3, label="Empirical ACF")
-ax.set_title("Empirical vs. Analytical Autocorrelation Function (p=2)")
-ax.set_xlabel("Lag h")
-ax.set_ylabel("Autocorrelation")
-ax.legend()
-plt.tight_layout()
-plt.show()
 ```
 
 *(Type your discussion here)*
@@ -752,7 +660,7 @@ order to achieve a perfect training accuracy, i.e., training MSE of zero? Why?
 *(Type your answer here)*
 
 17. (Bonus)
-Implement an example in Python in order to verify your answer to Q16 empirically. 
+Implement an example in order to verify your answer to Q16 empirically. 
 Use the cardiovascular mortality data, using enough lagged features. You should 
 be able to plot the fitted values from the training set and see that they match the 
 observations perfectly.
