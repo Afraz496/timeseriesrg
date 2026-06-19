@@ -62,9 +62,10 @@ from statsmodels.tsa.stattools import acf
 np.random.seed(123)
 
 # Number of time points
-n = 1000
+n = 1000000
 t = np.arange(1, n + 1)
 
+#the error might be empirical vs theoretical at the boundaries (add to discussion)
 # At least p = 2 components
 omega = np.array([0.05, 0.15])
 sigma2 = np.array([4.0, 1.0])
