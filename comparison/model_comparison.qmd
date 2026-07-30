@@ -1,0 +1,393 @@
+---
+title: "15-Model COVID-19 Forecast Benchmark"
+subtitle: "Comparing Statistical, Machine Learning, Deep Learning, Foundation Models, and Conformal Recalibration"
+author: "Time Series Analysis"
+date: today
+format: 
+  pdf:
+    toc: false
+    number-sections: true
+    colorlinks: true
+jupyter: python3
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: false
+---
+
+```{python}
+#| label: setup
+#| include: false
+
+import os
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.exponential_smoothing.ets import ETSModel
+
+# Configure matplotlib for clean, publication-quality figures
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.rcParams['figure.figsize'] = (10, 5)
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = ['Inter', 'DejaVu Sans', 'Arial']
+plt.rcParams['figure.dpi'] = 150
+
+def compute_mae(y_true, y_pred):
+    """Compute Mean Absolute Error (MAE)."""
+    return np.mean(np.abs(y_true - y_pred))
+
+def compute_coverage(y_true, lower, upper):
+    """Compute Empirical Prediction Interval Coverage."""
+    return np.mean((y_true >= lower) & (y_true <= upper))
+
+def compute_single_wis(y_true, y_pred, lower, upper, alpha=0.20):
+    """
+    Compute Weighted Interval Score (WIS) for a single central (1 - alpha) prediction interval.
+    For alpha = 0.20 (80% CI):
+        WIS_0.20 = 0.5 * |y - y_pred| + (alpha / 2) * (upper - lower) + max(lower - y, 0) + max(y - upper, 0)
+    """
+    sharpness = (alpha / 2.0) * (upper - lower)
+    overpred_penalty = np.maximum(lower - y_true, 0)
+    underpred_penalty = np.maximum(y_true - upper, 0)
+    point_penalty = 0.5 * np.abs(y_true - y_pred)
+    return point_penalty + sharpness + overpred_penalty + underpred_penalty
+
+def compute_multi_interval_wis(y_true, y_pred, intervals):
+    """
+    Compute multi-interval Weighted Interval Score (WIS) across K central intervals.
+    intervals: dict mapping alpha_val -> (lower_array, upper_array)
+    """
+    K = len(intervals)
+    point_penalty = 0.5 * np.abs(y_true - y_pred)
+    interval_sum = np.zeros_like(point_penalty, dtype=float)
+    
+    for alpha_val, (lower, upper) in intervals.items():
+        sharpness = (alpha_val / 2.0) * (upper - lower)
+        overpred = np.maximum(lower - y_true, 0)
+        underpred = np.maximum(y_true - upper, 0)
+        interval_sum += (sharpness + overpred + underpred)
+        
+    return (point_penalty + interval_sum) / (K + 0.5)
+
+def compute_metrics_by_horizon(df_all, models, horizons=[1, 2, 3, 4]):
+    """Calculate MAE, Multi-Alpha Coverages (50%, 80%, 90%, 95%), single 80% WIS, and Multi-Interval WIS."""
+    results = []
+    alpha_map = {0.50: "50", 0.20: "80", 0.10: "90", 0.05: "95"}
+    
+    for model in models:
+        sub_m = df_all[df_all["model"] == model]
+        for h in horizons:
+            sub_h = sub_m[sub_m["h"] == h]
+            y_h = sub_h["actual"].values
+            m_h = sub_h["mean"].values
+            
+            mae = compute_mae(y_h, m_h)
+            
+            intervals = {}
+            coverages = {}
+            for alpha_val, suffix in alpha_map.items():
+                l_arr = sub_h[f"lower_{suffix}"].values
+                u_arr = sub_h[f"upper_{suffix}"].values
+                intervals[alpha_val] = (l_arr, u_arr)
+                coverages[f"Coverage_{suffix}"] = compute_coverage(y_h, l_arr, u_arr)
+                
+            l_80, u_80 = intervals[0.20]
+            wis_80 = np.mean(compute_single_wis(y_h, m_h, l_80, u_80, alpha=0.20))
+            wis_multi = np.mean(compute_multi_interval_wis(y_h, m_h, intervals))
+            
+            rec = {
+                "Model": model,
+                "Horizon (h)": h,
+                "MAE": mae,
+                "WIS_80": wis_80,
+                "WIS_Multi": wis_multi,
+                **coverages
+            }
+            results.append(rec)
+            
+    return pd.DataFrame(results)
+
+def plot_metric_by_horizon(metrics_df, metric_col, title, ylabel, colors, horizons=[1, 2, 3, 4], target_val=None, is_percentage=False):
+    """Plot metric curves across forecast horizons for all models."""
+    plt.figure(figsize=(10, 5))
+    models = metrics_df["Model"].unique()
+    
+    for model in models:
+        sub = metrics_df[metrics_df["Model"] == model]
+        vals = sub[metric_col] * 100.0 if is_percentage else sub[metric_col]
+        plt.plot(sub["Horizon (h)"], vals, marker="o", label=model, color=colors.get(model, "#333333"), linewidth=1.8)
+
+    if target_val is not None:
+        ref_val = target_val * 100.0 if is_percentage else target_val
+        plt.axhline(ref_val, color="black", linestyle="--", alpha=0.7, label=f"Nominal Target ({ref_val:.0f}%)")
+
+    plt.xticks(horizons)
+    plt.xlabel("Forecast Horizon (Weeks)")
+    plt.ylabel(ylabel)
+    plt.title(title, fontsize=13, fontweight='bold')
+    plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=7)
+    plt.tight_layout()
+    plt.show()
+
+def plot_coverage_by_alpha(metrics_df, models, colors):
+    """Plot empirical coverage versus nominal target across multiple alpha levels."""
+    plt.figure(figsize=(10, 5))
+    alpha_levels = [50, 80, 90, 95]
+    
+    plt.plot(alpha_levels, alpha_levels, color="black", linestyle="--", linewidth=1.5, label="Perfect Calibration (Ideal)")
+    
+    for model in models:
+        sub = metrics_df[metrics_df["Model"] == model]
+        mean_covs = [sub[f"Coverage_{a}"].mean() * 100.0 for a in alpha_levels]
+        plt.plot(alpha_levels, mean_covs, marker="o", label=model, color=colors.get(model, "#333333"), linewidth=1.8)
+
+    plt.xticks(alpha_levels, ["50%", "80%", "90%", "95%"])
+    plt.xlabel("Nominal Prediction Interval Level")
+    plt.ylabel("Empirical Coverage (%)")
+    plt.title("Interval Calibration: Empirical vs. Nominal Coverage", fontsize=13, fontweight='bold')
+    plt.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=7)
+    plt.tight_layout()
+    plt.show()
+
+def plot_forecast_trajectories(observed_df, forecast_df, title, mean_col="mean", lower_col="lower_80", upper_col="upper_80", fc_dates=None):
+    """Plot observed time series alongside forecasted trajectories and 80% prediction intervals."""
+    if fc_dates is None:
+        fc_dates = pd.date_range(start="2020-06-13", end="2023-01-01", freq="42D")
+    
+    plt.figure(figsize=(10, 5))
+    plt.plot(observed_df["date"], observed_df["deaths"], color="black", label="Reported Covid-19 deaths", linewidth=1.2)
+    
+    for fc_date in fc_dates:
+        sub = forecast_df[forecast_df["forecast_date"] == fc_date].sort_values("target_date")
+        if not sub.empty:
+            plt.axvline(fc_date, color="grey", linestyle="--", alpha=0.4)
+            plt.fill_between(sub["target_date"], sub[lower_col], sub[upper_col], color="red", alpha=0.25)
+            plt.plot(sub["target_date"], sub[mean_col], color="red", linewidth=1.5)
+            
+    plt.xlabel("Date")
+    plt.ylabel("Reported Covid-19 Deaths")
+    plt.title(title, fontsize=13, fontweight='bold')
+    plt.tight_layout()
+    plt.show()
+
+def run_multi_alpha_cross_validation_pipeline(cases_deaths_sorted, covidhub_fc, csv_file="all_model_forecasts.csv"):
+    """Execute rolling time series cross-validation across all 15 models and return forecast dataframe."""
+    if os.path.exists(csv_file):
+        df_all = pd.read_csv(csv_file)
+        df_all["forecast_date"] = pd.to_datetime(df_all["forecast_date"])
+        df_all["target_date"] = pd.to_datetime(df_all["target_date"])
+        return df_all
+    else:
+        raise FileNotFoundError(f"Multi-alpha CSV file {csv_file} not found!")
+```
+
+# Introduction & Model Taxonomy
+
+This document evaluates 15 time series forecasting models for weekly reported U.S. COVID-19 deaths between June 2020 and March 2023. We conduct rolling origin cross-validation across 140 forecast origin dates, measuring accuracy and calibration over 1- to 4-week horizons ($h \in \{1, 2, 3, 4\}$). To assess prediction interval quality, we evaluate coverage and interval scoring across four central nominal levels: 50%, 80%, 90%, and 95% confidence intervals ($\alpha \in \{0.50, 0.20, 0.10, 0.05\}$).
+
+## Evaluated Models
+
+The benchmark encompasses five primary modeling paradigms summarized in the table below:
+
+| Model | Paradigm | Description |
+| :--- | :--- | :--- |
+| **CDC CovidHub Ensemble** | CDC Benchmark | Prospective multi-model ensemble benchmark submitted to the CDC COVID-19 Forecast Hub. |
+| **Empirical Baseline** | Baseline | Persistence point forecast ($y_{t+h} = y_t$) with prediction intervals constructed from historical differences. |
+| **ARIMA(1,1,0)** | Statistical | First-differenced autoregressive model with 1 lag and a linear trend. |
+| **ARIMA(2,1,0)** | Statistical | First-differenced autoregressive model with 2 lags and a linear trend. |
+| **Holt ETS** | Statistical | Exponential smoothing state-space model with additive trend. |
+| **Damped ETS** | Statistical | Exponential smoothing state-space model with damped additive trend. |
+| **ARIMAX (ARIMA+Cases)** | Exogenous | Autoregressive model on differenced log-deaths using 4-week lagged reported COVID-19 cases. |
+| **LightGBM (skforecast)** | Machine Learning | Gradient boosted decision trees fit recursively over rolling lag features using `skforecast`. |
+| **XGBoost (sktime)** | Machine Learning | Extreme gradient boosting fit recursively over autoregressive lag features using `sktime`. |
+| **N-BEATS (Neural)** | Deep Learning | Deep neural architecture based on backward and forward residual basis expansion. |
+| **N-HiTS (Neural)** | Deep Learning | Neural architecture using multi-rate sampling and hierarchical interpolation. |
+| **TimesFM (Google FM)** | Foundation Model | Google's pretrained zero-shot foundation model for time series forecasting. |
+| **Chronos (Amazon FM)** | Foundation Model | Amazon's pretrained zero-shot language-model-based time series forecaster. |
+| **ARIMAX + MAPIE (Conformal)** | Recalibration | Conformal residual recalibration applied on top of ARIMAX point forecasts. |
+| **ARIMAX + MultiQT (Tracking)** | Recalibration | Online multi-quantile tracking recalibration applied on top of ARIMAX point forecasts. |
+
+```{python}
+# Load dataset
+cases_deaths = pd.read_csv("cases_deaths.csv")
+covidhub_fc = pd.read_csv("covidhub_fc.csv")
+
+cases_deaths["date"] = pd.to_datetime(cases_deaths["date"])
+covidhub_fc["target_date"] = pd.to_datetime(covidhub_fc["target_date"])
+covidhub_fc["forecast_date"] = covidhub_fc["target_date"] - pd.to_timedelta(covidhub_fc["h"] * 7, unit="D")
+
+cases_deaths_sorted = cases_deaths.sort_values("date").reset_index(drop=True)
+```
+
+# Cross-Validation Dataset Setup
+
+```{python}
+# Load 15-model cross-validation dataset via helper function
+df_all = run_multi_alpha_cross_validation_pipeline(cases_deaths_sorted, covidhub_fc)
+
+models = df_all["model"].unique().tolist()
+
+colors = {
+    "CDC CovidHub Ensemble": "#FFB800",
+    "Empirical Baseline": "#7F8C8D",
+    "ARIMA(1,1,0)": "#E74C3C",
+    "ARIMA(2,1,0)": "#2980B9",
+    "Holt ETS": "#2ECC71",
+    "Damped ETS": "#8E44AD",
+    "ARIMAX (ARIMA+Cases)": "#E91E63",
+    "LightGBM (skforecast)": "#16A085",
+    "XGBoost (sktime)": "#D35400",
+    "N-BEATS (Neural)": "#9B59B6",
+    "N-HiTS (Neural)": "#8E44AD",
+    "TimesFM (Google FM)": "#34495E",
+    "Chronos (Amazon FM)": "#F39C12",
+    "ARIMAX + MAPIE (Conformal)": "#3498DB",
+    "ARIMAX + MultiQT (Tracking)": "#9B1B8C"
+}
+
+# Compute detailed metrics dataframe across all horizons and alphas
+metrics_df = compute_metrics_by_horizon(df_all, models, horizons=[1, 2, 3, 4])
+```
+
+\newpage
+
+# Benchmark Metric Results
+
+## Point Forecast Accuracy (MAE)
+
+We evaluate point forecast performance using Mean Absolute Error (MAE) across 1- to 4-week horizons. The table below shows MAE values for each model alongside their overall mean across all horizons.
+
+```{python}
+mae_pivot = metrics_df.pivot(index="Model", columns="Horizon (h)", values="MAE")
+mae_pivot["Overall Mean MAE"] = mae_pivot.mean(axis=1)
+mae_pivot = mae_pivot.sort_values("Overall Mean MAE")
+mae_pivot.round(2)
+```
+
+```{python}
+# Plot MAE Curves using helper function
+plot_metric_by_horizon(
+    metrics_df, 
+    metric_col="MAE", 
+    title="MAE Comparison by Forecast Horizon (All 15 Models)", 
+    ylabel="Mean Absolute Error (MAE)", 
+    colors=colors
+)
+```
+
+\newpage
+
+## Prediction Interval Coverage and Calibration
+
+### 80% Nominal Coverage
+
+To measure calibration, we examine whether empirical coverage aligns with nominal targets. The table below lists 80% prediction interval coverage across forecast horizons.
+
+```{python}
+cov80_pivot = metrics_df.pivot(index="Model", columns="Horizon (h)", values="Coverage_80")
+cov80_pivot["Overall 80% Coverage"] = cov80_pivot.mean(axis=1)
+cov80_pivot = cov80_pivot.loc[models]
+(cov80_pivot * 100).round(1).astype(str) + "%"
+```
+
+```{python}
+# Plot 80% Coverage Curves
+plot_metric_by_horizon(
+    metrics_df, 
+    metric_col="Coverage_80", 
+    title="80% Coverage Comparison by Horizon", 
+    ylabel="80% Interval Coverage (%)", 
+    colors=colors, 
+    target_val=0.80, 
+    is_percentage=True
+)
+```
+
+### Multi-Alpha Calibration (50%, 80%, 90%, 95%)
+
+We summarize overall empirical coverage across all four nominal alpha levels to assess how well each model calibrates prediction bounds across the full central distribution.
+
+```{python}
+multi_cov_summary = pd.DataFrame({
+    "Model": models,
+    "50% CI (Target 50%)": [metrics_df[metrics_df["Model"]==m]["Coverage_50"].mean() * 100 for m in models],
+    "80% CI (Target 80%)": [metrics_df[metrics_df["Model"]==m]["Coverage_80"].mean() * 100 for m in models],
+    "90% CI (Target 90%)": [metrics_df[metrics_df["Model"]==m]["Coverage_90"].mean() * 100 for m in models],
+    "95% CI (Target 95%)": [metrics_df[metrics_df["Model"]==m]["Coverage_95"].mean() * 100 for m in models],
+}).set_index("Model")
+multi_cov_summary.round(1).astype(str) + "%"
+```
+
+```{python}
+# Plot Calibration Across Alphas
+plot_coverage_by_alpha(metrics_df, models, colors)
+```
+
+\newpage
+
+## Probabilistic Interval Scoring (WIS)
+
+The Weighted Interval Score (WIS) combines point error with penalties for interval width and out-of-bounds observations. Multi-interval WIS averages these scores across all four central prediction intervals.
+
+```{python}
+wis_multi_pivot = metrics_df.pivot(index="Model", columns="Horizon (h)", values="WIS_Multi")
+wis_multi_pivot["Overall Multi-WIS"] = wis_multi_pivot.mean(axis=1)
+wis_multi_pivot = wis_multi_pivot.sort_values("Overall Multi-WIS")
+wis_multi_pivot.round(2)
+```
+
+```{python}
+# Plot Multi-Interval WIS Curves
+plot_metric_by_horizon(
+    metrics_df, 
+    metric_col="WIS_Multi", 
+    title="Multi-Interval Weighted Interval Score (WIS) by Horizon", 
+    ylabel="Multi-Interval WIS", 
+    colors=colors
+)
+```
+
+\newpage
+
+## Comprehensive Model Leaderboard
+
+The leaderboard ranks all 15 models by overall Multi-Interval WIS, providing a combined view of point accuracy, interval sharpness, and coverage calibration.
+
+```{python}
+summary_leaderboard = pd.DataFrame({
+    "Model": models,
+    "Overall MAE": [metrics_df[metrics_df["Model"]==m]["MAE"].mean() for m in models],
+    "Multi-WIS": [metrics_df[metrics_df["Model"]==m]["WIS_Multi"].mean() for m in models],
+    "80% WIS": [metrics_df[metrics_df["Model"]==m]["WIS_80"].mean() for m in models],
+    "50% Coverage": [metrics_df[metrics_df["Model"]==m]["Coverage_50"].mean() for m in models],
+    "80% Coverage": [metrics_df[metrics_df["Model"]==m]["Coverage_80"].mean() for m in models],
+    "90% Coverage": [metrics_df[metrics_df["Model"]==m]["Coverage_90"].mean() for m in models],
+    "95% Coverage": [metrics_df[metrics_df["Model"]==m]["Coverage_95"].mean() for m in models],
+}).set_index("Model").sort_values("Multi-WIS")
+
+summary_leaderboard.round(2)
+```
+
+\newpage
+
+# Forecast Trajectories
+
+We visualize the sequential forecast trajectories produced by each model at six-week intervals across the evaluation period.
+
+```{python}
+fc_dates_all = cases_deaths_sorted[(cases_deaths_sorted["date"] >= pd.to_datetime("2020-06-06")) & (cases_deaths_sorted["date"] <= pd.to_datetime("2023-02-04"))]["date"].values
+fc_dates_plot = pd.to_datetime(fc_dates_all)[::6]
+
+for model in models:
+    plot_forecast_trajectories(
+        cases_deaths_sorted,
+        df_all[df_all["model"] == model],
+        f"Forecast Trajectories: {model}",
+        fc_dates=fc_dates_plot
+    )
+```
+
+---
